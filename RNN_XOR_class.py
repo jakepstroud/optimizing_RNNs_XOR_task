@@ -20,7 +20,18 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 class RNN:
     def __init__(self, N = 50,T = 2000, tau = 50, dt = 1, 
                  noise_std = 0.01, reg = 0.0005, init_input_weight_scale = 'small'):
-        
+        """
+        Initialize an RNN model with given hyperparameters.
+
+        Parameters:
+        N (int): Number of neurons.
+        T (int): Length of simulation in ms.
+        tau (float): Time constant in ms.
+        dt (float): Euler step size in ms.
+        noise_std (float): Standard deviation of the Gaussian noise.
+        reg (float): Regularization coefficient (metabolic cost).
+        init_input_weight_scale (str): Scale of input weights ('0', 'small', or 'large').
+        """
         self.N = N #number of neurons        
         self.T = T #length of simulation (ms)
         self.tau = tau #time constant (ms)
@@ -57,10 +68,29 @@ class RNN:
         
     #Create numpy relu activation function
     def act_fun(self,x):
+        """
+        Applies a ReLU activation function to the input.
+
+        Parameters:
+        x (ndarray): Input array.
+
+        Returns:
+        ndarray: Output after applying ReLU.
+        """
         return np.maximum(0,x)
         
     #Simulate RNN dynamics in numpy
     def run_rnn(self,params, seed = None):
+        """
+        Simulates RNN dynamics over time for all task conditions (non-batched).
+
+        Parameters:
+        params (dict): Dictionary of RNN parameters (weights and biases).
+        seed (int): Optional random seed.
+
+        Returns:
+        tuple: Raw neural activity (x), firing rates (r), and output probabilities.
+        """
         np.random.seed(seed) #fix random seed if given
 
         color_weights = params['color_weights']
@@ -86,6 +116,16 @@ class RNN:
         
     #Simulate RNN dynamics in a batch in numpy
     def run_rnn_batch(self,params,seed = None):
+        """
+        Simulates RNN dynamics over time using batch processing.
+
+        Parameters:
+        params (dict): Dictionary of RNN parameters.
+        seed (int): Optional random seed.
+
+        Returns:
+        tuple: Batched raw activity (x), firing rates (r), and output probabilities.
+        """
         np.random.seed(seed) #fix random seed if given
         
         color_weights = params['color_weights']
@@ -111,6 +151,15 @@ class RNN:
         
     #Initialise network parameters before training
     def initialise_params(self,seed = None):
+        """
+        Initializes network parameters with random values.
+
+        Parameters:
+        seed (int): Optional random seed.
+
+        Returns:
+        dict: Initialized RNN parameters.
+        """
         np.random.seed(seed) #fix random seed if given
 
         color_weights = np.random.normal(0,self.scale,(self.N,2))
@@ -136,22 +185,55 @@ class RNN:
 
     #%% Tensorflow stuff
     @tf.function
-    def act_fun_tf(self,x_tf):        
+    def act_fun_tf(self,x_tf):
+        """
+        TensorFlow version of ReLU activation function.
+
+        Parameters:
+        x_tf (Tensor): Tensor input.
+
+        Returns:
+        Tensor: Output after applying ReLU.
+        """
         return tf.nn.relu(x_tf)
     
     @tf.function
     def cost_fun(self,outputs_tf): #Cross-entropy loss
+        """
+        Computes cross-entropy loss between outputs and target.
+
+        Parameters:
+        outputs_tf (Tensor): Network output logits.
+
+        Returns:
+        Tensor: Computed loss.
+        """
         return -tf.reduce_sum(self.tgt_tf*(tf.math.log(tf.nn.softmax(outputs_tf,axis=-2))))
 
     @tf.function
     def cond(self,x_tf,t,color_weights_tf,shape_weights_tf,width_weights_tf,
              W_tf,b_tf,w_out_tf,b_out_tf,cost):
+        """
+        Condition function for tf.while_loop.
+
+        Parameters:
+        x_tf (Tensor): RNN state.
+        t (Tensor): Time step.
+
+        Returns:
+        Tensor: Boolean condition for while loop.
+        """
         return tf.less(t,self.T)
     
     @tf.function
     def body(self,x_tf,t,color_weights_tf,shape_weights_tf,width_weights_tf,
              W_tf,b_tf,w_out_tf,b_out_tf,cost):
-        
+        """
+        Body function for tf.while_loop that updates RNN state.
+
+        Returns:
+        tuple: Updated variables after one step.
+        """
         #Run rnn dynamics
         x_tf = x_tf + self.dt_tau*(-x_tf + W_tf @ self.act_fun_tf(x_tf) + b_tf) + tf.math.sqrt(self.dt_tau_tf)*self.noise_std*tf.random.normal((self.batch_size,self.N,self.n_conds),dtype=tf.float64)
         
@@ -180,6 +262,12 @@ class RNN:
     @tf.function
     def run_rnn_while(self,color_weights_tf,shape_weights_tf,width_weights_tf,
              W_tf,b_tf,w_out_tf,b_out_tf):
+        """
+        Executes the RNN forward pass and computes loss using TensorFlow while loop.
+
+        Returns:
+        Tensor: Total loss after simulation.
+        """
         cost = tf.constant(0.0,dtype=tf.float64)
         t = tf.constant(0,dtype=tf.int64)
         x_tf = tf.zeros((self.batch_size,self.N,self.n_conds),dtype=tf.float64)
@@ -198,7 +286,16 @@ class RNN:
              W_tf,b_tf,w_out_tf,b_out_tf,cost), parallel_iterations=10)
         return cost
     
-    def initialise_tf_params(self,params_init):       
+    def initialise_tf_params(self,params_init):    
+        """
+        Converts NumPy parameter arrays to TensorFlow variables.
+
+        Parameters:
+        params_init (dict): Initialized NumPy parameters.
+
+        Returns:
+        tuple: TensorFlow variables for RNN parameters.
+        """
         color_weights_tf = tf.Variable(params_init['color_weights'],dtype=tf.float64)
         shape_weights_tf = tf.Variable(params_init['shape_weights'],dtype=tf.float64)
         width_weights_tf = tf.Variable(params_init['width_weights'],dtype=tf.float64)
@@ -213,7 +310,18 @@ class RNN:
         
     def train_rnn(self,params_init,learning_rate = 0.001,
                   n_train_steps = 1000,seed = None):
-        
+        """
+        Trains the RNN using TensorFlow and backpropagation through time.
+
+        Parameters:
+        params_init (dict): Initialized parameters.
+        learning_rate (float): Learning rate for optimizer.
+        n_train_steps (int): Number of training steps.
+        seed (int): Optional seed for reproducibility.
+
+        Returns:
+        dict: Trained RNN parameters.
+        """
         tf.random.set_seed(0)
         self.learning_rate = learning_rate #learning rate
         self.n_train_steps = n_train_steps #number of training steps (200 may be enough, but 1000 may be needed for complete convergence)
@@ -258,11 +366,20 @@ class RNN:
     
     #%% Plotting    
     def plot_cost(self):
+        """
+        Plots cost over training iterations.
+        """
         plt.plot(self.cost_over_training)
         plt.xlabel('training iterations')
         plt.ylabel('cost')
 
     def plot_outputs(self,outputs):
+        """
+        Plots RNN output probabilities over time for different condition types.
+
+        Parameters:
+        outputs (ndarray): Output probabilities over time.
+        """
         rew_idx = [0,1,4,5]
         n_rew_idx = [2,3,6,7]
         
@@ -280,7 +397,13 @@ class RNN:
         plt.ylim([0,1])
         
     def plot_temporal_decoding(self,decoding_init,decoding_trained):
-        
+        """
+        Plots temporal decoding performance before and after training.
+
+        Parameters:
+        decoding_init (ndarray): Initial decoding performance.
+        decoding_trained (ndarray): Decoding after training.
+        """
         fig, axs = plt.subplots(1,4,figsize=(4,1))
         plt.subplots_adjust(wspace=0.5)
         stimuli = ['XOR','shape','color','width']
@@ -303,7 +426,13 @@ class RNN:
                 axs[0].legend(['early learning','late learning'],handlelength=1,ncol=2,loc=(-0.75,1.05))
         
     def plot_changes_stim_coding(self,stim_coding_init,stim_coding_trained):
-        
+        """
+        Plots change in stimulus representation and overlap before/after training.
+
+        Parameters:
+        stim_coding_init (ndarray): Initial stimulus coding values.
+        stim_coding_trained (ndarray): Final stimulus coding values.
+        """
         fig, axs = plt.subplots(1,2,figsize=(2,1))
         plt.subplots_adjust(wspace=1)
         red = '#c12b2b'
@@ -326,7 +455,13 @@ class RNN:
         axs[1].set_ylim([0,None])
     
     def plot_changes_firing_rates(self,rates_init,rates_trained):
-        
+        """
+        Plots changes in average firing rates before and after training.
+
+        Parameters:
+        rates_init (ndarray): Initial firing rates.
+        rates_trained (ndarray): Final firing rates.
+        """
         plt.plot(rates_init,'.-',color=[0.5,0.5,0.5])
         plt.plot(rates_trained,'.-k')
         plt.xticks([0,1,2],['fixation\nperiod','color\nperiod','shape\nperiod'])
@@ -337,7 +472,15 @@ class RNN:
         
     #%% Analysis
     def temporal_decoding(self,params_in):
-        
+        """
+        Computes decoding accuracy of different task variables over time.
+
+        Parameters:
+        params_in (dict): Parameters of the RNN.
+
+        Returns:
+        ndarray: Decoding accuracy matrix of shape (4, time, runs).
+        """
         lin_model = SVC(kernel='linear')
         targets_x = np.stack([[1,1,0,0,1,1,0,0]]*self.batch_size).flatten() #xor
         targets_s = np.stack([[0,0,1,1,1,1,0,0]]*self.batch_size).flatten() #shape        
@@ -366,7 +509,15 @@ class RNN:
         return decoding
     
     def stimulus_coding(self,params_in):
-        
+        """
+        Computes stimulus-related coding using regression on neural activity.
+
+        Parameters:
+        params_in (dict): Parameters of the RNN.
+
+        Returns:
+        tuple: Regression weights and overlaps for further analysis.
+        """
         _,r,_ = self.run_rnn_batch(params_in)
         r = np.transpose(r[1400:1500,:],[0,1,3,2])
             
